@@ -1,5 +1,5 @@
 // 坦克解锁顺序
-const UNLOCK_ORDER = [
+export const UNLOCK_ORDER = [
   'basic', 'fast_tank', 'heavy_tank', 'water_ghost',
   'armored_car', 'shield_tank', 'melee_tank', 'siege_tank',
   'apocalypse', 'super_heavy', 'engineer', 'rocket_launcher', 'nuke_launcher'

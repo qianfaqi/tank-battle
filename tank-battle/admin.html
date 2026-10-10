@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>🔧 管理员面板 · 坦克大战</title>
+<style>
+:root{
+  --panel:#16213e; --gold:#f0c040; --text:#e8eaf2; --text2:#98a0bd;
+  --green:#27ae60; --red:#e94560; --border:#2c3a60;
+}
+*{margin:0;padding:0;box-sizing:border-box;}
+body{
+  font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;
+  background:radial-gradient(circle at 50% -10%,#26305c 0%,#141a33 45%,#080a14 100%);
+  color:var(--text); min-height:100vh; padding:20px;
+}
+.container{max-width:1000px;margin:0 auto;}
+h1{font-size:1.5rem;margin-bottom:16px;color:var(--gold);text-align:center;letter-spacing:2px;}
+.row{display:flex;gap:8px;margin-bottom:12px;background:var(--panel);padding:12px;border-radius:10px;border:1px solid var(--border);}
+input{flex:1;padding:10px 14px;border-radius:8px;border:2px solid var(--border);background:#121a30;color:var(--text);outline:none;font-family:inherit;font-size:.9rem;}
+input:focus{border-color:var(--gold);}
+button{padding:10px 18px;border:none;border-radius:8px;cursor:pointer;font-weight:700;font-size:.9rem;font-family:inherit;transition:transform .15s;}
+button:active{transform:scale(.96);}
+.btn-gold{background:linear-gradient(160deg,#ffd45e,#e0a91a);color:#1a1a2e;}
+.btn-blue{background:linear-gradient(160deg,#63b6ff,#2b7fd4);color:#fff;}
+.btn-red{background:linear-gradient(160deg,#ff5b74,#c62a44);color:#fff;}
+.btn-outline{background:rgba(255,255,255,.05);border:2px solid #6b7699;color:#cfd6ea;padding:8px 14px;font-size:.82rem;}
+.btn-outline:hover{border-color:#fff;color:#fff;}
+.btn-sm{padding:7px 12px;font-size:.78rem;}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(360px,1fr));gap:14px;}
+.card{background:var(--panel);border-radius:12px;padding:16px;border:1px solid var(--border);}
+.card-head{display:flex;justify-content:space-between;align-items:baseline;padding-bottom:10px;border-bottom:1px solid var(--border);margin-bottom:10px;}
+.uname{font-size:1.1rem;font-weight:700;color:var(--gold);}
+.uid{font-size:.72rem;color:var(--text2);}
+.meta{font-size:.74rem;color:var(--text2);line-height:1.6;margin-bottom:10px;}
+.stats{font-size:.84rem;color:var(--text2);background:rgba(10,16,36,.6);padding:8px 12px;border-radius:8px;margin-bottom:10px;}
+.stats span{color:var(--gold);font-weight:700;margin-right:10px;}
+.hint{font-size:.75rem;color:var(--text2);margin-bottom:6px;}
+.tags{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px;}
+.tag{padding:4px 10px;border-radius:12px;font-size:.72rem;border:1.5px solid var(--border);background:#121a30;color:#6c7391;cursor:pointer;transition:all .2s;user-select:none;}
+.tag.on{border-color:var(--green);color:#8affb0;background:rgba(39,174,96,.15);}
+.tag:hover{transform:translateY(-1px);}
+.actions{display:flex;flex-wrap:wrap;gap:6px;}
+.empty{text-align:center;color:var(--text2);padding:40px;grid-column:1/-1;}
+.toast{
+  position:fixed;top:24px;left:50%;transform:translateX(-50%) translateY(-100px);
+  background:#1b2748;color:#fff;padding:12px 24px;border-radius:10px;font-weight:700;
+  border:2px solid var(--gold);box-shadow:0 8px 30px rgba(0,0,0,.6);z-index:999;
+  transition:transform .3s cubic-bezier(.34,1.56,.64,1);max-width:80vw;text-align:center;
+}
+.toast.show{transform:translateX(-50%) translateY(0);}
+.toast.err{border-color:var(--red);}
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>🔧 坦克大战 · 管理员面板</h1>
+
+  <div class="row">
+    <input id="admin-key" type="password" placeholder="管理员密钥（对应环境变量 ADMIN_KEY）">
+    <button class="btn-blue" onclick="saveKey()">💾 保存</button>
+  </div>
+
+  <div class="row">
+    <input id="search" type="text" placeholder="搜索用户名（留空=列出最近 50 个）"
+           onkeydown="if(event.key==='Enter')loadUsers()">
+    <button class="btn-gold" onclick="loadUsers()">🔍 搜索</button>
+    <button class="btn-outline" onclick="clearSearch()">全部</button>
+  </div>
+
+  <div id="users" class="grid">
+    <div class="empty">请输入管理员密钥后点击"搜索"</div>
+  </div>
+</div>
+
+<div id="toast" class="toast"></div>
+
+<script>
+const ALL_TANKS = [
+  ['basic','普通坦克'], ['fast_tank','快速坦克'], ['heavy_tank','重型坦克'],
+  ['water_ghost','水陆两栖'], ['armored_car','装甲车'], ['shield_tank','防爆车'],
+  ['melee_tank','近战坦克'], ['siege_tank','攻城车'], ['apocalypse','天启坦克'],
+  ['super_heavy','超重型'], ['engineer','工程师'], ['rocket_launcher','火箭车'],
+  ['nuke_launcher','核弹车'],
+];
+const $ = id => document.getElementById(id);
+$('admin-key').value = localStorage.getItem('admin_key') || '';
+
+function saveKey(){ localStorage.setItem('admin_key', $('admin-key').value); toast('密钥已保存'); }
+function getKey(){ return $('admin-key').value.trim(); }
+
+function toast(msg, isErr){
+  const el = $('toast');
+  el.textContent = msg;
+  el.classList.toggle('err', !!isErr);
+  el.classList.add('show');
+  clearTimeout(el._t);
+  el._t = setTimeout(() => el.classList.remove('show'), 2200);
+}
+
+async function api(path, opts = {}){
+  const headers = { ...(opts.headers||{}), 'X-Admin-Key': getKey() };
+  if (opts.body) headers['Content-Type'] = 'application/json';
+  const res = await fetch(path, { ...opts, headers });
+  const data = await res.json().catch(()=>({}));
+  if (!res.ok) throw new Error(data.error || ('HTTP ' + res.status));
+  return data;
+}
+
+async function loadUsers(){
+  const q = $('search').value.trim();
+  if (!getKey()) { toast('请先输入管理员密钥', true); return; }
+  $('users').innerHTML = '<div class="empty">加载中...</div>';
+  try {
+    const data = await api('/api/admin/users?q=' + encodeURIComponent(q));
+    renderUsers(data.users || []);
+  } catch (e) {
+    $('users').innerHTML = `<div class="empty" style="color:#ff6b6b;">${escapeHtml(e.message)}</div>`;
+  }
+}
+
+function clearSearch(){ $('search').value = ''; loadUsers(); }
+
+function escapeHtml(s){
+  return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+function renderUsers(users){
+  if (!users.length) {
+    $('users').innerHTML = '<div class="empty">没有找到用户</div>';
+    return;
+  }
+  $('users').innerHTML = users.map(u => {
+    const tanks = (u.unlocked_tanks || 'basic').split(',').filter(Boolean);
+    return `
+      <div class="card">
+        <div class="card-head">
+          <span class="uname">${escapeHtml(u.username)}</span>
+          <span class="uid">ID #${u.id}</span>
+        </div>
+        <div class="meta">
+          注册：${u.created_at || '-'}<br>
+          最后登录：${u.last_login || '从未登录'}
+        </div>
+        <div class="stats">
+          <span>🏆 ${u.total_wins || 0}</span>
+          <span>💀 ${u.total_losses || 0}</span>
+          <span>🎮 ${u.total_games || 0}</span>
+          <span>⚔️ ${(u.total_damage || 0).toFixed(1)}</span>
+        </div>
+        <div class="hint">已解锁坦克（点击切换）</div>
+        <div class="tags">
+          ${ALL_TANKS.map(([id,name]) =>
+            `<span class="tag ${tanks.includes(id)?'on':''}"
+                   onclick="toggleTank(${u.id},'${id}',this)">${name}</span>`).join('')}
+        </div>
+        <div class="actions">
+          <button class="btn-gold btn-sm" onclick="doAction(${u.id},'unlock_all')">🔓 全解锁</button>
+          <button class="btn-outline btn-sm" onclick="doAction(${u.id},'unlock_next')">➕ 解锁下一辆</button>
+          <button class="btn-outline btn-sm" onclick="doAction(${u.id},'reset_tanks')">🔒 重置坦克</button>
+          <button class="btn-outline btn-sm" onclick="doAction(${u.id},'reset_stats')">📊 重置战绩</button>
+          <button class="btn-red btn-sm" onclick="doAction(${u.id},'delete_user')">🗑 删除</button>
+        </div>
+      </div>`;
+  }).join('');
+}
+
+async function toggleTank(userId, tankId, el){
+  const isOn = el.classList.contains('on');
+  try {
+    await api('/api/admin/user', {
+      method: 'POST',
+      body: JSON.stringify({ userId, action: isOn ? 'remove_tank' : 'add_tank', tankId }),
+    });
+    el.classList.toggle('on', !isOn);
+    toast(`已${isOn?'移除':'添加'}：${tankId}`);
+  } catch (e) { toast(e.message, true); }
+}
+
+async function doAction(userId, action){
+  if (action === 'delete_user' && !confirm('确定删除该用户？所有数据不可恢复！')) return;
+  if (action === 'reset_stats' && !confirm('确定重置该用户战绩？')) return;
+  if (action === 'reset_tanks' && !confirm('确定重置该用户坦克到仅基础？')) return;
+  try {
+    const data = await api('/api/admin/user', {
+      method: 'POST',
+      body: JSON.stringify({ userId, action }),
+    });
+    toast(data.message || '操作成功');
+    loadUsers();
+  } catch (e) { toast(e.message, true); }
+}
+
+// 页面打开时若已有密钥则自动加载
+if ($('admin-key').value) loadUsers();
+</script>
+</body>
+</html>

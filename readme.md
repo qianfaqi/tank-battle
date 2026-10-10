@@ -3,6 +3,9 @@
 一个纯前端 + Cloudflare 全栈的回合制坦克对战游戏，支持用户注册登录、坦克解锁、云存档与排行榜。
 
 > **本 README 目的**：为后续 AI 辅助开发提供完整上下文，任何新的对话只需附上本文件，即可快速理解项目全貌，无需重复解释。
+
+---
+
 ## 一、项目速览
 
 | 项目 | 说明 |
@@ -24,23 +27,23 @@
 
 ```
 tank-battle/
-├── README.md                    ← 本文件
-├── index.html                   ← 整个游戏前端（唯一前端文件）
-├── wrangler.toml                ← Cloudflare 配置（D1 绑定）
-├── functions/                   ← Cloudflare Pages Functions（后端 API）
-│   └── api/
-│       ├── _middleware.js       ← 通用中间件（CORS、错误处理）
-│       ├── auth/
-│       │   ├── register.js      ← POST /api/auth/register
-│       │   ├── login.js         ← POST /api/auth/login
-│       │   ├── me.js            ← GET  /api/auth/me
-│       │   └── logout.js        ← POST /api/auth/logout
-│       ├── game/
-│       │   ├── unlock.js        ← POST /api/game/unlock（上报战绩+解锁）
-│       │   └── load.js          ← GET  /api/game/load（读取存档）
-│       └── leaderboard.js       ← GET  /api/leaderboard
+├── README.md ← 本文件
+├── index.html ← 整个游戏前端（唯一前端文件）
+├── wrangler.toml ← Cloudflare 配置（D1 绑定）
+├── functions/ ← Cloudflare Pages Functions（后端 API）
+│ └── api/
+│ ├── _middleware.js ← 通用中间件（CORS、错误处理）
+│ ├── auth/
+│ │ ├── register.js ← POST /api/auth/register
+│ │ ├── login.js ← POST /api/auth/login
+│ │ ├── me.js ← GET /api/auth/me
+│ │ └── logout.js ← POST /api/auth/logout
+│ ├── game/
+│ │ ├── unlock.js ← POST /api/game/unlock（上报战绩+解锁）
+│ │ └── load.js ← GET /api/game/load（读取存档）
+│ └── leaderboard.js ← GET /api/leaderboard
 └── migrations/
-    └── 0001_init.sql            ← 数据库建表 SQL
+└── 0001_init.sql ← 数据库建表 SQL
 ```
 
 ### 关键说明
@@ -108,8 +111,9 @@ tank-battle/
    - Cloudflare Dashboard → Workers & Pages → Create → Pages → Connect to Git
    - 选择 `tank-battle` 仓库
    - Framework preset：**None**
-   - Build command：**留空**
+   - Build command：**`exit 0`**（关键！让 Pages 识别 `functions/` 目录）
    - Build output directory：**留空**
+   - Root directory：**留空**
 
 5. **绑定 D1**
    - Pages 项目 → Settings → Functions → D1 database bindings
@@ -187,8 +191,7 @@ database_id = "你的数据库ID（从 Dashboard 复制）"
 | token | TEXT PK | 32 字节随机 hex |
 | user_id | INTEGER | 外键 → users.id |
 | expires_at | TEXT | 过期时间（创建后 7 天） |
-| created_at | TEXT | 创建时间 |
-
+| created_at | TEXT | 时间戳 |
 ---
 
 ## 六、后端 API 文档
