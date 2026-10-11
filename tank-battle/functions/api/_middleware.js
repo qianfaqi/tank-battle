@@ -8,7 +8,8 @@ export async function onRequest(context) {
       headers: {
         'Access-Control-Allow-Origin': '*',
         'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-        'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+        'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Admin-Key',
+        'Access-Control-Max-Age': '86400',
       },
     });
   }
@@ -18,6 +19,7 @@ export async function onRequest(context) {
     // 给所有响应加上 CORS 头
     const newHeaders = new Headers(response.headers);
     newHeaders.set('Access-Control-Allow-Origin', '*');
+    newHeaders.set('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Admin-Key');
     return new Response(response.body, {
       status: response.status,
       headers: newHeaders,

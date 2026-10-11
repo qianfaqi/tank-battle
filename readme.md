@@ -27,23 +27,30 @@
 
 ```
 tank-battle/
-├── README.md ← 本文件
-├── index.html ← 整个游戏前端（唯一前端文件）
-├── wrangler.toml ← Cloudflare 配置（D1 绑定）
-├── functions/ ← Cloudflare Pages Functions（后端 API）
-│ └── api/
-│ ├── _middleware.js ← 通用中间件（CORS、错误处理）
-│ ├── auth/
-│ │ ├── register.js ← POST /api/auth/register
-│ │ ├── login.js ← POST /api/auth/login
-│ │ ├── me.js ← GET /api/auth/me
-│ │ └── logout.js ← POST /api/auth/logout
-│ ├── game/
-│ │ ├── unlock.js ← POST /api/game/unlock（上报战绩+解锁）
-│ │ └── load.js ← GET /api/game/load（读取存档）
-│ └── leaderboard.js ← GET /api/leaderboard
+├── README.md
+├── index.html
+├── admin.html                         ← 新增
+├── wrangler.toml
+├── functions/
+│   └── api/
+│       ├── _middleware.js
+│       ├── auth/
+│       │   ├── register.js
+│       │   ├── login.js
+│       │   ├── me.js
+│       │   └── logout.js
+│       ├── game/
+│       │   ├── unlock.js
+│       │   ├── load.js
+│       │   └── campaign-clear.js      ← 新增
+│       ├── admin/                     ← 新增目录
+│       │   ├── _helpers.js
+│       │   ├── users.js
+│       │   └── user.js
+│       └── leaderboard.js
 └── migrations/
-└── 0001_init.sql ← 数据库建表 SQL
+    ├── 0001_init.sql
+    └── 0002_campaign.sql              ← 新增
 ```
 
 ### 关键说明
@@ -264,7 +271,7 @@ const UNLOCK_ORDER = [
 ];
 ```
 
-**规则**：每次人机对战胜利，解锁当前已解锁列表中的下一辆。若已全部解锁，则 `newUnlock = null`。
+**规则**：每次人机对战胜利，按稀有度加权随机从"未解锁坦克池"中抽取一辆。稀有度越高的坦克权重越低（权重 ≈ 10 - 稀有度 × 1.2）。
 
 ---
 
@@ -436,7 +443,7 @@ MAP_CONFIGS  // 数组，6 张地图：0号阵地、十字路口、楚河汉界�
 | 辐射场 | 核弹发射车本体和核弹爆点周围有辐射伤害 |
 | 碾压 | 超重型坦克可以碾压单位、化桥为河、压碎障碍 |
 
-### 8.4 坦克列表（13 种）
+### 8.4 坦克列表（24 种）
 
 | ID | 名称 | HP | 速度 | 射程 | 攻击 | 特点 |
 |----|------|-----|------|------|------|------|

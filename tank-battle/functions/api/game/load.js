@@ -1,3 +1,5 @@
+const INITIAL_TANKS = ['basic', 'armored_car'];
+
 async function verifyToken(token, env) {
   if (!token) return null;
   const session = await env.DB.prepare(
@@ -18,23 +20,27 @@ export async function onRequestGet({ request, env }) {
   ).bind(session.user_id).first();
 
   if (!save) {
-    // 存档不存在则创建
+    const initialTanksStr = INITIAL_TANKS.join(',');
     await env.DB.prepare(
-      `INSERT INTO user_saves (user_id, unlocked_tanks) VALUES (?, 'basic')`
-    ).bind(session.user_id).run();
+      `INSERT INTO user_saves (user_id, unlocked_tanks) VALUES (?, ?)`
+    ).bind(session.user_id, initialTanksStr).run();
     return Response.json({
-      unlockedTanks: ['basic'],
-      stats: { total_wins: 0, total_losses: 0, total_games: 0, total_damage: 0 },
+      unlockedTanks: INITIAL_TANKS.slice(),
+      stats: { total_wins: 0, total_losses: 0, total_games: 0, total_damage: 0 }
     });
   }
 
+  const unlockedArr = (save.unlocked_tanks || INITIAL_TANKS.join(','))
+    .split(',').map(s => s.trim()).filter(Boolean);
+  if (!unlockedArr.includes('basic')) unlockedArr.unshift('basic');
+
   return Response.json({
-    unlockedTanks: save.unlocked_tanks.split(','),
+    unlockedTanks: unlockedArr,
     stats: {
-      total_wins: save.total_wins,
-      total_losses: save.total_losses,
-      total_games: save.total_games,
-      total_damage: save.total_damage,
-    },
+      total_wins:   save.total_wins   || 0,
+      total_losses: save.total_losses || 0,
+      total_games:  save.total_games  || 0,
+      total_damage: save.total_damage || 0
+    }
   });
 }

@@ -1,3 +1,5 @@
+const INITIAL_TANKS = ['basic', 'armored_car'];
+
 async function hashPassword(password, salt) {
   const encoder = new TextEncoder();
   const data = encoder.encode(password + salt);
@@ -13,7 +15,9 @@ function generateToken() {
 }
 
 export async function onRequestPost({ request, env }) {
-  const { username, password } = await request.json();
+  let body = {};
+  try { body = await request.json(); } catch (e) {}
+  const { username, password } = body || {};
 
   if (!username || !password) {
     return Response.json({ error: '用户名和密码不能为空' }, { status: 400 });
@@ -46,16 +50,36 @@ export async function onRequestPost({ request, env }) {
     'INSERT INTO sessions (token, user_id, expires_at) VALUES (?, ?, ?)'
   ).bind(token, user.id, expiresAt).run();
 
-  // 读取存档
-  const save = await env.DB.prepare(
-    'SELECT unlocked_tanks, total_wins, total_losses, total_games FROM user_saves WHERE user_id = ?'
+  // 读取存档（不存在则创建）
+  let save = await env.DB.prepare(
+    'SELECT unlocked_tanks, total_wins, total_losses, total_games, total_damage FROM user_saves WHERE user_id = ?'
   ).bind(user.id).first();
+
+  if (!save) {
+    const initialTanksStr = INITIAL_TANKS.join(',');
+    await env.DB.prepare(
+      `INSERT INTO user_saves (user_id, unlocked_tanks) VALUES (?, ?)`
+    ).bind(user.id, initialTanksStr).run();
+    save = {
+      unlocked_tanks: initialTanksStr,
+      total_wins: 0, total_losses: 0, total_games: 0, total_damage: 0
+    };
+  }
+
+  const unlockedArr = (save.unlocked_tanks || INITIAL_TANKS.join(','))
+    .split(',').map(s => s.trim()).filter(Boolean);
+  if (!unlockedArr.includes('basic')) unlockedArr.unshift('basic');
 
   return Response.json({
     success: true,
     token,
     user: { id: user.id, username: user.username },
-    unlockedTanks: save ? save.unlocked_tanks.split(',') : ['basic'],
-    stats: save || { total_wins: 0, total_losses: 0, total_games: 0 },
+    unlockedTanks: unlockedArr,
+    stats: {
+      total_wins:   save.total_wins   || 0,
+      total_losses: save.total_losses || 0,
+      total_games:  save.total_games  || 0,
+      total_damage: save.total_damage || 0
+    }
   });
 }

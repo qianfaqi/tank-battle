@@ -15,7 +15,7 @@ body{
   background:radial-gradient(circle at 50% -10%,#26305c 0%,#141a33 45%,#080a14 100%);
   color:var(--text); min-height:100vh; padding:20px;
 }
-.container{max-width:1000px;margin:0 auto;}
+.container{max-width:1100px;margin:0 auto;}
 h1{font-size:1.5rem;margin-bottom:16px;color:var(--gold);text-align:center;letter-spacing:2px;}
 .row{display:flex;gap:8px;margin-bottom:12px;background:var(--panel);padding:12px;border-radius:10px;border:1px solid var(--border);}
 input{flex:1;padding:10px 14px;border-radius:8px;border:2px solid var(--border);background:#121a30;color:var(--text);outline:none;font-family:inherit;font-size:.9rem;}
@@ -28,7 +28,7 @@ button:active{transform:scale(.96);}
 .btn-outline{background:rgba(255,255,255,.05);border:2px solid #6b7699;color:#cfd6ea;padding:8px 14px;font-size:.82rem;}
 .btn-outline:hover{border-color:#fff;color:#fff;}
 .btn-sm{padding:7px 12px;font-size:.78rem;}
-.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(360px,1fr));gap:14px;}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(420px,1fr));gap:14px;}
 .card{background:var(--panel);border-radius:12px;padding:16px;border:1px solid var(--border);}
 .card-head{display:flex;justify-content:space-between;align-items:baseline;padding-bottom:10px;border-bottom:1px solid var(--border);margin-bottom:10px;}
 .uname{font-size:1.1rem;font-weight:700;color:var(--gold);}
@@ -37,11 +37,13 @@ button:active{transform:scale(.96);}
 .stats{font-size:.84rem;color:var(--text2);background:rgba(10,16,36,.6);padding:8px 12px;border-radius:8px;margin-bottom:10px;}
 .stats span{color:var(--gold);font-weight:700;margin-right:10px;}
 .hint{font-size:.75rem;color:var(--text2);margin-bottom:6px;}
-.tags{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px;}
+.tank-group{margin-bottom:10px;}
+.tank-group-title{font-size:.72rem;color:var(--gold);font-weight:700;margin-bottom:5px;letter-spacing:1px;}
+.tags{display:flex;flex-wrap:wrap;gap:6px;}
 .tag{padding:4px 10px;border-radius:12px;font-size:.72rem;border:1.5px solid var(--border);background:#121a30;color:#6c7391;cursor:pointer;transition:all .2s;user-select:none;}
 .tag.on{border-color:var(--green);color:#8affb0;background:rgba(39,174,96,.15);}
 .tag:hover{transform:translateY(-1px);}
-.actions{display:flex;flex-wrap:wrap;gap:6px;}
+.actions{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px;padding-top:10px;border-top:1px solid var(--border);}
 .empty{text-align:center;color:var(--text2);padding:40px;grid-column:1/-1;}
 .toast{
   position:fixed;top:24px;left:50%;transform:translateX(-50%) translateY(-100px);
@@ -77,13 +79,88 @@ button:active{transform:scale(.96);}
 <div id="toast" class="toast"></div>
 
 <script>
-const ALL_TANKS = [
-  ['basic','普通坦克'], ['fast_tank','快速坦克'], ['heavy_tank','重型坦克'],
-  ['water_ghost','水陆两栖'], ['armored_car','装甲车'], ['shield_tank','防爆车'],
-  ['melee_tank','近战坦克'], ['siege_tank','攻城车'], ['apocalypse','天启坦克'],
-  ['super_heavy','超重型'], ['engineer','工程师'], ['rocket_launcher','火箭车'],
-  ['nuke_launcher','核弹车'],
+/* ============================================================
+   坦克列表（与前端 TANK_CONFIGS / ALL_UNLOCKABLE_TANKS 保持一致）
+   按稀有度分组，便于管理员点击切换
+============================================================ */
+const TANK_GROUPS = [
+  {
+    title: '★ 初始（稀有度 1）',
+    tanks: [
+      ['basic', '普通坦克'],
+      ['armored_car', '装甲车'],
+    ]
+  },
+  {
+    title: '★ 稀有度 2',
+    tanks: [
+      ['water_ghost', '水陆两栖'],
+      ['fast_tank', '快速坦克'],
+    ]
+  },
+  {
+    title: '★ 稀有度 3',
+    tanks: [
+      ['heavy_tank', '重型坦克'],
+      ['shield_tank', '护盾车'],
+      ['melee_tank', '近战坦克'],
+    ]
+  },
+  {
+    title: '★ 稀有度 4',
+    tanks: [
+      ['siege_tank', '攻城车'],
+      ['dm_car', 'D.M.装甲车'],
+      ['repair_tank', '维修坦克'],
+    ]
+  },
+  {
+    title: '★ 稀有度 5',
+    tanks: [
+      ['flame_tank', '烈焰战车'],
+      ['digger_car', '钻地车'],
+      ['engineer', '工程师'],
+      ['rocket_launcher', '火箭车'],
+    ]
+  },
+  {
+    title: '★ 稀有度 6',
+    tanks: [
+      ['super_heavy', '超重型'],
+      ['artillery_tank', '巨炮坦克'],
+      ['nano_3', '纳米III型'],
+      ['nano_repair', '纳米修复车'],
+    ]
+  },
+  {
+    title: '★ 稀有度 7',
+    tanks: [
+      ['apocalypse', '天启坦克'],
+      ['nuke_launcher', '核弹车'],
+    ]
+  },
+  {
+    title: '★ 稀有度 8',
+    tanks: [
+      ['fire_tank', '焚火战车'],
+      ['robot_plus', '机器人加强'],
+      ['nano_2', '纳米II型'],
+      ['nano_1', '纳米I型'],
+    ]
+  },
+  {
+    title: '★ 特殊（战役专用，常规不可解锁）',
+    tanks: [
+      ['base_tank', '基地坦克'],
+    ]
+  },
 ];
+
+// 扁平化（供"全解锁"等使用）
+const ALL_TANK_IDS = TANK_GROUPS.reduce((acc, g) => acc.concat(g.tanks.map(t => t[0])), []);
+// 可解锁坦克（去掉基地坦克）
+const UNLOCKABLE_TANK_IDS = ALL_TANK_IDS.filter(id => id !== 'base_tank');
+
 const $ = id => document.getElementById(id);
 $('admin-key').value = localStorage.getItem('admin_key') || '';
 
@@ -132,12 +209,26 @@ function renderUsers(users){
     return;
   }
   $('users').innerHTML = users.map(u => {
-    const tanks = (u.unlocked_tanks || 'basic').split(',').filter(Boolean);
+    const tanks = (u.unlocked_tanks || 'basic,armored_car').split(',').filter(Boolean);
+    const unlockedCount = tanks.length;
+
+    const groupsHtml = TANK_GROUPS.map(g => {
+      const tags = g.tanks.map(([id, name]) =>
+        `<span class="tag ${tanks.includes(id)?'on':''}"
+               title="${id}"
+               onclick="toggleTank(${u.id},'${id}',this)">${name}</span>`
+      ).join('');
+      return `<div class="tank-group">
+        <div class="tank-group-title">${escapeHtml(g.title)}</div>
+        <div class="tags">${tags}</div>
+      </div>`;
+    }).join('');
+
     return `
-      <div class="card">
+      <div class="card" data-userid="${u.id}">
         <div class="card-head">
           <span class="uname">${escapeHtml(u.username)}</span>
-          <span class="uid">ID #${u.id}</span>
+          <span class="uid">ID #${u.id} · 已解锁 ${unlockedCount}/${UNLOCKABLE_TANK_IDS.length}</span>
         </div>
         <div class="meta">
           注册：${u.created_at || '-'}<br>
@@ -149,15 +240,12 @@ function renderUsers(users){
           <span>🎮 ${u.total_games || 0}</span>
           <span>⚔️ ${(u.total_damage || 0).toFixed(1)}</span>
         </div>
-        <div class="hint">已解锁坦克（点击切换）</div>
-        <div class="tags">
-          ${ALL_TANKS.map(([id,name]) =>
-            `<span class="tag ${tanks.includes(id)?'on':''}"
-                   onclick="toggleTank(${u.id},'${id}',this)">${name}</span>`).join('')}
-        </div>
+        <div class="hint">点击坦克名切换解锁状态：</div>
+        ${groupsHtml}
         <div class="actions">
           <button class="btn-gold btn-sm" onclick="doAction(${u.id},'unlock_all')">🔓 全解锁</button>
-          <button class="btn-outline btn-sm" onclick="doAction(${u.id},'unlock_next')">➕ 解锁下一辆</button>
+          <button class="btn-outline btn-sm" onclick="doAction(${u.id},'unlock_initial')">🔰 只留初始</button>
+          <button class="btn-outline btn-sm" onclick="doAction(${u.id},'unlock_next')">➕ 随机解锁一辆</button>
           <button class="btn-outline btn-sm" onclick="doAction(${u.id},'reset_tanks')">🔒 重置坦克</button>
           <button class="btn-outline btn-sm" onclick="doAction(${u.id},'reset_stats')">📊 重置战绩</button>
           <button class="btn-red btn-sm" onclick="doAction(${u.id},'delete_user')">🗑 删除</button>
@@ -181,7 +269,8 @@ async function toggleTank(userId, tankId, el){
 async function doAction(userId, action){
   if (action === 'delete_user' && !confirm('确定删除该用户？所有数据不可恢复！')) return;
   if (action === 'reset_stats' && !confirm('确定重置该用户战绩？')) return;
-  if (action === 'reset_tanks' && !confirm('确定重置该用户坦克到仅基础？')) return;
+  if (action === 'reset_tanks' && !confirm('确定重置该用户坦克到仅初始坦克？')) return;
+  if (action === 'unlock_initial' && !confirm('确定清空该用户除初始外所有坦克？')) return;
   try {
     const data = await api('/api/admin/user', {
       method: 'POST',

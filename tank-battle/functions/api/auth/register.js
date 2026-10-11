@@ -19,8 +19,13 @@ function generateToken() {
   return Array.from(arr).map(b => b.toString(16).padStart(2, '0')).join('');
 }
 
+// 与前端 INITIAL_TANKS 保持一致
+const INITIAL_TANKS = ['basic', 'armored_car'];
+
 export async function onRequestPost({ request, env }) {
-  const { username, password } = await request.json();
+  let body = {};
+  try { body = await request.json(); } catch (e) {}
+  const { username, password } = body || {};
 
   // 参数校验
   if (!username || !password) {
@@ -52,10 +57,11 @@ export async function onRequestPost({ request, env }) {
 
   const userId = result.meta.last_row_id;
 
-  // 自动创建存档记录，默认解锁 basic 坦克
+  // 自动创建存档记录：默认解锁 basic + armored_car
+  const initialTanksStr = INITIAL_TANKS.join(',');
   await env.DB.prepare(
-    `INSERT INTO user_saves (user_id, unlocked_tanks) VALUES (?, 'basic')`
-  ).bind(userId).run();
+    `INSERT INTO user_saves (user_id, unlocked_tanks) VALUES (?, ?)`
+  ).bind(userId, initialTanksStr).run();
 
   // 创建会话 token
   const token = generateToken();
@@ -68,6 +74,7 @@ export async function onRequestPost({ request, env }) {
     success: true,
     token,
     user: { id: userId, username },
-    unlockedTanks: ['basic'],
+    unlockedTanks: INITIAL_TANKS.slice(),
+    stats: { total_wins: 0, total_losses: 0, total_games: 0, total_damage: 0 }
   });
 }

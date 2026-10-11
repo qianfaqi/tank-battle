@@ -1,5 +1,5 @@
 import { checkAdmin } from './_helpers.js';
-import { UNLOCK_ORDER } from '../game/unlock.js';
+import { UNLOCK_ORDER, INITIAL_TANKS, pickRandomUnlock } from '../game/unlock.js';
 
 export async function onRequestPost({ request, env }) {
   const auth = checkAdmin(request, env);
@@ -20,39 +20,59 @@ export async function onRequestPost({ request, env }) {
   let save = await env.DB.prepare('SELECT * FROM user_saves WHERE user_id = ?').bind(userId).first();
   if (!save) {
     await env.DB.prepare('INSERT INTO user_saves (user_id, unlocked_tanks) VALUES (?, ?)')
-      .bind(userId, 'basic').run();
+      .bind(userId, INITIAL_TANKS.join(',')).run();
     save = await env.DB.prepare('SELECT * FROM user_saves WHERE user_id = ?').bind(userId).first();
+  }
+
+  // 取得当前解锁列表（做规范化）
+  function currentTanks() {
+    const arr = (save.unlocked_tanks || INITIAL_TANKS.join(','))
+      .split(',').map(s => s.trim()).filter(Boolean);
+    if (!arr.includes('basic')) arr.unshift('basic');
+    return arr;
   }
 
   // ---- 预设快捷操作 ----
   if (action) {
     switch (action) {
-      case 'unlock_all':
+      case 'unlock_all': {
+        // 全解锁：所有可解锁坦克（不含 base_tank）
+        const all = UNLOCK_ORDER.slice();
+        if (!all.includes('basic')) all.unshift('basic');
         await env.DB.prepare(
           `UPDATE user_saves SET unlocked_tanks = ?, updated_at = datetime('now') WHERE user_id = ?`
-        ).bind(UNLOCK_ORDER.join(','), userId).run();
+        ).bind(all.join(','), userId).run();
         return Response.json({ success: true, message: '已解锁全部坦克' });
+      }
 
-      case 'reset_tanks':
+      case 'unlock_initial': {
         await env.DB.prepare(
-          `UPDATE user_saves SET unlocked_tanks = 'basic', updated_at = datetime('now') WHERE user_id = ?`
-        ).bind(userId).run();
-        return Response.json({ success: true, message: '已重置为仅基础坦克' });
+          `UPDATE user_saves SET unlocked_tanks = ?, updated_at = datetime('now') WHERE user_id = ?`
+        ).bind(INITIAL_TANKS.join(','), userId).run();
+        return Response.json({ success: true, message: '已重置为初始坦克（basic + armored_car）' });
+      }
+
+      case 'reset_tanks': {
+        await env.DB.prepare(
+          `UPDATE user_saves SET unlocked_tanks = ?, updated_at = datetime('now') WHERE user_id = ?`
+        ).bind(INITIAL_TANKS.join(','), userId).run();
+        return Response.json({ success: true, message: '已重置为初始坦克' });
+      }
 
       case 'unlock_next': {
-        const current = (save.unlocked_tanks || 'basic').split(',').filter(Boolean);
-        const next = UNLOCK_ORDER.find(t => !current.includes(t));
+        const current = currentTanks();
+        const next = pickRandomUnlock(current);
         if (!next) return Response.json({ success: true, message: '已全部解锁，无新车可解锁' });
         current.push(next);
         await env.DB.prepare(
           `UPDATE user_saves SET unlocked_tanks = ?, updated_at = datetime('now') WHERE user_id = ?`
         ).bind(current.join(','), userId).run();
-        return Response.json({ success: true, message: `已解锁新坦克：${next}`, newUnlock: next });
+        return Response.json({ success: true, message: `已随机解锁新坦克：${next}`, newUnlock: next });
       }
 
       case 'add_tank': {
         if (!tankId) return Response.json({ error: '缺少 tankId' }, { status: 400 });
-        const current = (save.unlocked_tanks || 'basic').split(',').filter(Boolean);
+        const current = currentTanks();
         if (!current.includes(tankId)) current.push(tankId);
         await env.DB.prepare(
           `UPDATE user_saves SET unlocked_tanks = ?, updated_at = datetime('now') WHERE user_id = ?`
@@ -62,8 +82,8 @@ export async function onRequestPost({ request, env }) {
 
       case 'remove_tank': {
         if (!tankId) return Response.json({ error: '缺少 tankId' }, { status: 400 });
-        let current = (save.unlocked_tanks || 'basic').split(',').filter(t => t && t !== tankId);
-        if (!current.includes('basic')) current.unshift('basic'); // 保证至少 basic
+        let current = currentTanks().filter(t => t !== tankId);
+        if (!current.includes('basic')) current.unshift('basic');
         await env.DB.prepare(
           `UPDATE user_saves SET unlocked_tanks = ?, updated_at = datetime('now') WHERE user_id = ?`
         ).bind(current.join(','), userId).run();
