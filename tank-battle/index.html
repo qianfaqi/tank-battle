@@ -2006,8 +2006,9 @@ const TANK_CONFIGS = [
    ★ 补丁：仅作为衍生物/特殊单位存在，玩家不可选
 ============================================================ */
 const DERIVATIVE_TANK_IDS = new Set([
-  'robot', 'missile', 'nuke'
-]);
+  'robot', 'missile', 'nuke',
+  'nano_2', 'nano_1'
+])
 
 /* ============================================================
    3. 地图配置
@@ -8417,7 +8418,7 @@ function renderPokedexContent() {
   const othC = document.getElementById('pokedex-other-tanks');
   if (othC) {
     othC.innerHTML = '';
-    const otherUnits = [ROBOT, MISSILE, NUKE];
+    const otherUnits = [ROBOT, MISSILE, NUKE, NANO_2, NANO_1];
     otherUnits.forEach(function(cfg) {
       const d = document.createElement('div');
       d.className = 'tank-card';
@@ -10412,6 +10413,11 @@ function initUnits() {
       initUnitAnim(bu);
     }
     blueHQ = { pos: bp, hp: 6, maxHp: 6, burnTurns: 0, baseTank: null };
+    for (const u of redUnits.concat(blueUnits)) {
+      if (isNanoUnit(u) && !u.nanoGroupId) {
+        u.nanoGroupId = 'grp_' + u.team + '_' + Date.now() + '_' + Math.floor(Math.random() * 10000);
+      }
+    }
   }
   for (const u of redUnits.concat(blueUnits)) {
     if (isNanoUnit(u) && !u.nanoGroupId) {
