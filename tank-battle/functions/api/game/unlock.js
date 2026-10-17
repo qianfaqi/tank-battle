@@ -1,13 +1,12 @@
 /* ============================================================
    坦克稀有度系统 & 解锁配置
-   —— 与前端 index.html 中的 TANK_RARITY / INITIAL_TANKS 保持一致
+   —— 与前端 config.js 的 TANK_RARITY / INITIAL_TANKS 保持一致
+   ★ 修复：nano_3 / robot_plus 可被解锁（与前端一致）
 ============================================================ */
 
-// 初始已解锁坦克（注册即拥有）
 export const INITIAL_TANKS = ['basic', 'armored_car'];
 
-// 所有可解锁坦克（不含 base_tank 基地坦克）
-// 顺序仅供参考；实际解锁为稀有度加权随机
+// 所有可解锁坦克（不含 base_tank、机器人、导弹、核弹等衍生单位）
 export const ALL_UNLOCKABLE_TANKS = [
   // 稀有度 1
   'basic', 'armored_car',
@@ -27,10 +26,8 @@ export const ALL_UNLOCKABLE_TANKS = [
   'fire_tank', 'robot_plus', 'nano_2', 'nano_1'
 ];
 
-// 兼容旧命名（admin 的"全解锁"按钮使用）
 export const UNLOCK_ORDER = ALL_UNLOCKABLE_TANKS;
 
-// 坦克稀有度表（1-9，越高越稀有，权重越低）
 export const TANK_RARITY = {
   basic: 1, armored_car: 1,
   water_ghost: 2, fast_tank: 2,
@@ -43,8 +40,6 @@ export const TANK_RARITY = {
   base_tank: 9
 };
 
-// 根据稀有度加权随机抽取一辆未解锁坦克
-// 返回坦克 ID 或 null（全解锁时）
 export function pickRandomUnlock(currentList) {
   const unlocked = (currentList && currentList.length ? currentList : INITIAL_TANKS.slice());
   const pool = [];
@@ -71,63 +66,37 @@ export async function onRequestPost({ request, env }) {
   const authHeader = request.headers.get('Authorization') || '';
   const token = authHeader.replace('Bearer ', '');
   const session = await verifyToken(token, env);
-
-  if (!session) {
-    return Response.json({ error: '未登录' }, { status: 401 });
-  }
+  if (!session) return Response.json({ error: '未登录' }, { status: 401 });
 
   let body = {};
   try { body = await request.json(); } catch (e) {}
   const { mode, result, tankUsed, damageDealt, turnCount } = body || {};
 
-  // 记录对局
   await env.DB.prepare(
     `INSERT INTO match_records (user_id, result, mode, tank_used, damage_dealt, turn_count)
      VALUES (?, ?, ?, ?, ?, ?)`
-  ).bind(
-    session.user_id,
-    result || 'loss',
-    mode || 'pve',
-    tankUsed || 'basic',
-    damageDealt || 0,
-    turnCount || 0
-  ).run();
+  ).bind(session.user_id, result || 'loss', mode || 'pve', tankUsed || 'basic', damageDealt || 0, turnCount || 0).run();
 
-  // 读取存档
-  let save = await env.DB.prepare(
-    'SELECT * FROM user_saves WHERE user_id = ?'
-  ).bind(session.user_id).first();
-
+  let save = await env.DB.prepare('SELECT * FROM user_saves WHERE user_id = ?').bind(session.user_id).first();
   if (!save) {
-    await env.DB.prepare(
-      `INSERT INTO user_saves (user_id, unlocked_tanks) VALUES (?, ?)`
-    ).bind(session.user_id, INITIAL_TANKS.join(',')).run();
-    save = await env.DB.prepare(
-      'SELECT * FROM user_saves WHERE user_id = ?'
-    ).bind(session.user_id).first();
+    await env.DB.prepare(`INSERT INTO user_saves (user_id, unlocked_tanks) VALUES (?, ?)`).bind(session.user_id, INITIAL_TANKS.join(',')).run();
+    save = await env.DB.prepare('SELECT * FROM user_saves WHERE user_id = ?').bind(session.user_id).first();
   }
 
-  let unlockedList = (save.unlocked_tanks || INITIAL_TANKS.join(','))
-    .split(',').map(s => s.trim()).filter(Boolean);
+  let unlockedList = (save.unlocked_tanks || INITIAL_TANKS.join(',')).split(',').map(s => s.trim()).filter(Boolean);
   if (!unlockedList.includes('basic')) unlockedList.unshift('basic');
 
   let newUnlock = null;
-
-  // 人机对战胜利 → 稀有度加权随机解锁一辆
   if (result === 'win' && mode === 'pve') {
     newUnlock = pickRandomUnlock(unlockedList);
-    if (newUnlock && !unlockedList.includes(newUnlock)) {
-      unlockedList.push(newUnlock);
-    }
+    if (newUnlock && !unlockedList.includes(newUnlock)) unlockedList.push(newUnlock);
   }
 
-  const wins   = (save.total_wins   || 0) + (result === 'win'  ? 1 : 0);
+  const wins = (save.total_wins || 0) + (result === 'win' ? 1 : 0);
   const losses = (save.total_losses || 0) + (result === 'loss' ? 1 : 0);
-  const games  = (save.total_games  || 0) + 1;
+  const games = (save.total_games || 0) + 1;
   const totalDamage = (save.total_damage || 0) + (damageDealt || 0);
-  const bestTurns = (result === 'win' && turnCount > 0)
-    ? Math.min(save.best_turn_count || 999, turnCount)
-    : (save.best_turn_count || 999);
+  const bestTurns = (result === 'win' && turnCount > 0) ? Math.min(save.best_turn_count || 999, turnCount) : (save.best_turn_count || 999);
 
   await env.DB.prepare(
     `UPDATE user_saves
@@ -135,11 +104,7 @@ export async function onRequestPost({ request, env }) {
          total_games = ?, total_damage = ?, best_turn_count = ?,
          updated_at = datetime('now')
      WHERE user_id = ?`
-  ).bind(
-    unlockedList.join(','),
-    wins, losses, games, totalDamage, bestTurns,
-    session.user_id
-  ).run();
+  ).bind(unlockedList.join(','), wins, losses, games, totalDamage, bestTurns, session.user_id).run();
 
   return Response.json({
     success: true,
