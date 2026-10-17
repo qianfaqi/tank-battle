@@ -36,6 +36,9 @@ body{
   justify-content:center;
   z-index:2;          /* 登录页永远在上层 */
 }
+/* 加在 style.css 里 #view-login.active 之后 */
+#view-main.active ~ #view-login { display: none !important; }
+
 #view-main.active{
   display:block;
 }

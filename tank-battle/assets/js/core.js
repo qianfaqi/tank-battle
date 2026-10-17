@@ -1,3 +1,6 @@
+if (typeof CJK_FONT === 'undefined') {
+  var CJK_FONT = '"PingFang SC","Microsoft YaHei",sans-serif';
+}
 /* ========== 通用工具 ========== */
 if (!CanvasRenderingContext2D.prototype.roundRect) {
   CanvasRenderingContext2D.prototype.roundRect = function(x,y,w,h,r){

@@ -6,30 +6,18 @@ var Router = {
   _transitioning: false,
 
   navigate(view) {
-    if (this._transitioning) return;
     if (this.currentView === view) return;
-    this._transitioning = true;
-
-    var loading = document.getElementById('loading-overlay');
-    if (loading) { loading.classList.remove('hidden'); loading.classList.add('show'); }
-
-    setTimeout(function () {
-      var loginView = document.getElementById('view-login');
-      var mainView = document.getElementById('view-main');
-      if (view === 'login') {
-        if (loginView) loginView.classList.add('active');
-        if (mainView) mainView.classList.remove('active');
-      } else {
-        if (loginView) loginView.classList.remove('active');
-        if (mainView) mainView.classList.add('active');
-        Router._initMainApp();
-      }
-      Router.currentView = view;
-      setTimeout(function () {
-        if (loading) { loading.classList.remove('show'); setTimeout(function () { loading.classList.add('hidden'); }, 300); }
-        Router._transitioning = false;
-      }, 200);
-    }, 300);
+    var loginView = document.getElementById('view-login');
+    var mainView  = document.getElementById('view-main');
+    if (view === 'login') {
+      if (loginView) loginView.classList.add('active');
+      if (mainView)  mainView.classList.remove('active');
+    } else {
+      if (loginView) loginView.classList.remove('active');
+      if (mainView)  mainView.classList.add('active');
+      this._initMainApp();
+    }
+    this.currentView = view;
   },
 
   _initMainApp() {
