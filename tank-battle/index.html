@@ -2382,7 +2382,81 @@ function renderDevLog() {
   }).join('');
   body.scrollTop = body.scrollHeight;
 }
-
+/* ============================================================
+   8. 特效系统数据
+============================================================ */
+function addFloatingText(row, col, text, color, offsetIndex) {
+  if (offsetIndex === undefined) offsetIndex = 0;
+  floatingTexts.push({
+    row: row, col: col, text: text, color: color,
+    offsetX: (offsetIndex % 3 - 1) * 8,
+    offsetY: -Math.floor(offsetIndex / 3) * 6,
+    startTime: performance.now(),
+    life: 700
+  });
+}
+function spawnDust(row, col, count, color) {
+  count = count || 10;
+  for (let i = 0; i < count; i++) {
+    effects.push({
+      type: 'dust', row: row, col: col,
+      ox: (Math.random() - 0.5) * 0.9,
+      oy: (Math.random() - 0.5) * 0.9,
+      size: 0.10 + Math.random() * 0.14,
+      color: color || '#b8a888',
+      startTime: performance.now(),
+      duration: 500 + Math.random() * 300
+    });
+  }
+}
+function spawnSpark(row, col, count) {
+  count = count || 8;
+  for (let i = 0; i < count; i++) {
+    effects.push({
+      type: 'spark', row: row, col: col,
+      ox: (Math.random() - 0.5) * 0.9,
+      oy: (Math.random() - 0.5) * 0.9,
+      vx: (Math.random() - 0.5) * 1.6,
+      vy: (Math.random() - 0.5) * 1.6,
+      size: 0.05 + Math.random() * 0.06,
+      startTime: performance.now(),
+      duration: 260 + Math.random() * 220
+    });
+  }
+}
+function spawnDebris(row, col, count, color) {
+  count = count || 10;
+  for (let i = 0; i < count; i++) {
+    effects.push({
+      type: 'debris', row: row, col: col,
+      ox: (Math.random() - 0.5) * 0.9,
+      oy: (Math.random() - 0.5) * 0.9,
+      vx: (Math.random() - 0.5) * 2.4,
+      vy: -Math.random() * 2.2 - 0.8,
+      size: 0.08 + Math.random() * 0.08,
+      color: color || '#8B4513',
+      rot: Math.random() * Math.PI,
+      rotSpeed: (Math.random() - 0.5) * 0.3,
+      startTime: performance.now(),
+      duration: 600 + Math.random() * 300
+    });
+  }
+}
+function spawnSmokePuff(row, col, count, color) {
+  count = count || 6;
+  for (let i = 0; i < count; i++) {
+    effects.push({
+      type: 'smoke', row: row, col: col,
+      ox: (Math.random() - 0.5) * 0.6,
+      oy: (Math.random() - 0.5) * 0.4,
+      vy: -0.4 - Math.random() * 0.4,
+      size: 0.18 + Math.random() * 0.18,
+      color: color || 'rgba(60,60,60,',
+      startTime: performance.now(),
+      duration: 900 + Math.random() * 500
+    });
+  }
+}
 /* ============================================================
    10. 等距投影系统（2.5D）
 ============================================================ */
@@ -7884,22 +7958,32 @@ function handleMapClick(row, col) {
     const cu = redUnits.concat(blueUnits).find(function(u) {
       return u.alive && u.pos && u.pos.row === row && u.pos.col === col;
     });
-    if (cu) {
-      rangeDisplayUnit = cu;
-      if (cu.team === currentTeam && !cu.cfg.isNuke) {
-        currentUnit = cu;
-        selectedAction = null;
-        highlightedCells = [];
-        highlightedBuildCells = [];
+    // ★ 关键修复：处于攻击模式时，不要被范围显示拦截，交给下面的攻击流程处理
+    const isAttackMode = (selectedAction === 'attack');
+    if (isAttackMode) {
+      // 攻击模式下：清除范围显示，直接继续攻击流程
+      rangeDisplayUnit = null;
+      const rbtn = document.getElementById('btn-range-toggle');
+      if (rbtn) rbtn.classList.remove('active');
+      // 不 return，继续往下走
+    } else {
+      if (cu) {
+        rangeDisplayUnit = cu;
+        if (cu.team === currentTeam && !cu.cfg.isNuke) {
+          currentUnit = cu;
+          selectedAction = null;
+          highlightedCells = [];
+          highlightedBuildCells = [];
+        }
+        updateGameUI();
+        drawGameCanvas(performance.now());
+        return;
       }
-      updateGameUI();
+      if (isHQCell(row, col)) return;
+      rangeDisplayUnit = null;
       drawGameCanvas(performance.now());
       return;
     }
-    if (isHQCell(row, col)) return;
-    rangeDisplayUnit = null;
-    drawGameCanvas(performance.now());
-    return;
   }
 
   if ((gameMode === 'pve' && currentTeam === 'blue') || trustEnabled[currentTeam]) {
