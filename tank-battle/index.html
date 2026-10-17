@@ -2006,9 +2006,7 @@ const TANK_CONFIGS = [
    ★ 补丁：仅作为衍生物/特殊单位存在，玩家不可选
 ============================================================ */
 const DERIVATIVE_TANK_IDS = new Set([
-  'robot', 'robot_plus',
-  'missile', 'nuke',
-  'nano_3', 'nano_2', 'nano_1'
+  'robot', 'missile', 'nuke'
 ]);
 
 /* ============================================================
@@ -4932,7 +4930,7 @@ function destroyUnit(unit) {
     triggerFireTankDeathExplosion(unit, deathRow, deathCol);
   }
 
-  if (unit.cfg.isRobot || unit.cfg.isMissile || unit.cfg.isNuke) {
+  if ((unit.cfg.isRobot && unit.builder) || unit.cfg.isMissile || unit.cfg.isNuke) {
     const arr = unit.team === 'red' ? redUnits : blueUnits;
     const i = arr.indexOf(unit);
     if (i > -1) arr.splice(i, 1);
@@ -5912,7 +5910,7 @@ async function executeBuild(builder, row, col) {
   let limit = 0, curCount = 0, label = '', childCfg = null, childKind = '', actionWord = '建造';
   if (builder.cfg.special === 'builder') {
     limit = builder.cfg.robotLimit;
-    curCount = cur.filter(function(u) { return u.cfg.isRobot && u.alive; }).length;
+    curCount = cur.filter(function(u) { return u.cfg.isRobot && u.alive && u.builder; }).length;
     label = '🤖 机器人';
     childCfg = Object.assign({}, ROBOT, {
       color: builder.team === 'red' ? '#e94560' : '#4da6ff',
@@ -7529,7 +7527,7 @@ function aiNukeLauncherAction(unit) {
 function aiSelectBuildPosition(unit) {
   const cur = getCurrentUnits();
   if (unit.cfg.special === 'builder') {
-    if (cur.filter(function(u) { return u.cfg.isRobot && u.alive; }).length >= unit.cfg.robotLimit) return null;
+    if (cur.filter(function(u) { return u.cfg.isRobot && u.alive && u.builder; }).length >= unit.cfg.robotLimit) return null;
   } else if (unit.cfg.special === 'rocket_builder') {
     if (cur.filter(function(u) { return u.cfg.isMissile && u.alive; }).length >= unit.cfg.rocketLimit) return null;
   } else if (unit.cfg.special === 'nuke_builder') {
@@ -8419,7 +8417,7 @@ function renderPokedexContent() {
   const othC = document.getElementById('pokedex-other-tanks');
   if (othC) {
     othC.innerHTML = '';
-    const otherUnits = [ROBOT, ROBOT_PLUS, MISSILE, NUKE, NANO_3, NANO_2, NANO_1];
+    const otherUnits = [ROBOT, MISSILE, NUKE];
     otherUnits.forEach(function(cfg) {
       const d = document.createElement('div');
       d.className = 'tank-card';
@@ -10414,6 +10412,11 @@ function initUnits() {
       initUnitAnim(bu);
     }
     blueHQ = { pos: bp, hp: 6, maxHp: 6, burnTurns: 0, baseTank: null };
+  }
+  for (const u of redUnits.concat(blueUnits)) {
+    if (isNanoUnit(u) && !u.nanoGroupId) {
+      u.nanoGroupId = 'grp_' + u.team + '_' + Date.now() + '_' + Math.floor(Math.random() * 10000);
+    }
   }
 }
 
