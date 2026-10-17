@@ -6582,7 +6582,15 @@ async function triggerHQDestroy(team) {
   drawGameCanvas(performance.now());
   showOverlay('🏆 ' + (team === 'red' ? '蓝方' : '红方') + '胜利！', 1400);
   playVictory();
-  setTimeout(function() { showSettlement(); }, 500);
+  setTimeout(function() {
+    if (onlineRunning) {
+      const winner = team === 'red' ? 'blue' : 'red';
+      onlineSubmitState(false, winner);
+      showOnlineEnd(winner);
+    } else {
+      showSettlement();
+    }
+  }, 500);
 }
 
 /* ============================================================
@@ -6596,6 +6604,10 @@ async function endTurn() {
   if (currentState !== 'GAME_PLAY') return;
   if (isEndingTurn) return;
   if (inputLocked) return;
+  if (onlineRunning && currentTeam !== OnlineState.myTeam) {
+    showOverlay('⏳ 还没轮到你', 1000);
+    return;
+  }
   isEndingTurn = true;
   inputLocked = true;
   updateActionButtons();
@@ -6754,14 +6766,22 @@ async function endTurn() {
     updateTrustButton();
     drawGameCanvas(performance.now());
 
-    if (trustEnabled[currentTeam] || (gameMode === 'pve' && currentTeam === 'blue')) {
+    if (onlineRunning) {
+      await onlineSubmitState(false);
+      if (currentTeam !== OnlineState.myTeam) {
+        lockForOnlineWait();
+        startOnlinePolling(false);
+      }
+    } else if (trustEnabled[currentTeam] || (gameMode === 'pve' && currentTeam === 'blue')) {
       setTimeout(function() { aiTakeTurnForTrust(); }, 520);
     } else if (autoSkipEnabled) {
       checkAutoSkip();
     }
   } finally {
     isEndingTurn = false;
-    inputLocked = false;
+    if (!onlineRunning || currentTeam === OnlineState.myTeam) {
+      inputLocked = false;
+    }
     updateActionButtons();
   }
 }
@@ -7952,6 +7972,10 @@ async function aiTakeTurnForTrust() {
 ============================================================ */
 function handleMapClick(row, col) {
   if (currentState !== 'GAME_PLAY' || inputLocked) return;
+  if (onlineRunning && currentTeam !== OnlineState.myTeam) {
+    showOverlay('⏳ 等待对手行动', 1000);
+    return;
+  }
 
   if (rangeDisplayUnit) {
     const cu = redUnits.concat(blueUnits).find(function(u) {
@@ -8128,6 +8152,10 @@ function setCurrentUnit(unit) {
 function selectAction(action) {
   playClick();
   if (currentState !== 'GAME_PLAY' || inputLocked) return;
+  if (onlineRunning && currentTeam !== OnlineState.myTeam) {
+    showOverlay('⏳ 等待对手行动', 1000);
+    return;
+  }
   if ((gameMode === 'pve' && currentTeam === 'blue') || trustEnabled[currentTeam]) {
     showOverlay('🤖 AI托管中，请等待', 1000);
     return;
@@ -9203,6 +9231,10 @@ async function init() {
     localStorage.setItem('tank_first_visit', '1');
     setTimeout(function() { showOverlay('👋 欢迎来到坦克大战 V2.1.0！\n底部切换模式，顶部查看账号/排行', 3000); }, 800);
   }
+  const urlParams = new URLSearchParams(location.search);
+  if (urlParams.get('online') === '1' && urlParams.get('room')) {
+    await startOnlineGame(urlParams.get('room').toUpperCase());
+  }
 }
 
 /* ============================================================
@@ -9512,210 +9544,411 @@ function openEditor() {
 }
 
 /* ============================================================
-   90. 联机对战
+   90. 联机对战（新：状态同步模式）
 ============================================================ */
 const OnlineState = {
   roomId: null,
-  role: null,
-  playerTeam: null,
-  polling: false,
+  myTeam: null,        // 'red' | 'blue'
+  running: false,
+  lastMoveCount: 0,
   pollTimer: null,
-  lastTurn: 0,
-  opponentName: '',
-  disconnected: false
+  ended: false,
+  roomCache: null
 };
 
-function openOnlineMenu() {
-  playClick();
-  currentState = 'ONLINE';
-  switchScreen('screen-online');
-  renderOnlinePanel();
+/* ---- 序列化：把整份战斗状态打包上传 ---- */
+function onlineSerialize() {
+  const serUnit = u => ({
+    cfgId: u.cfg.id,
+    hp: u.hp, maxHp: u.maxHp, alive: u.alive,
+    pos: u.pos ? { row: u.pos.row, col: u.pos.col } : null,
+    shield: u.shield, shieldLayers: u.shieldLayers || 0,
+    cooldownRemaining: u.cooldownRemaining || 0, cooldownLocked: !!u.cooldownLocked,
+    moveStepsLeft: u.moveStepsLeft || 0, attackCountLeft: u.attackCountLeft || 0,
+    buildCountLeft: u.buildCountLeft || 0,
+    waitingJump: !!u.waitingJump, jumpWaitTurns: u.jumpWaitTurns || 0,
+    jumpDest: u.jumpDest || null,
+    isUnderground: !!u.isUnderground, waitingDigIn: !!u.waitingDigIn, pendingDigOut: !!u.pendingDigOut,
+    burnTurns: u.burnTurns || 0,
+    nanoGroupId: u.nanoGroupId || null, nanoLevel: u.nanoLevel || 0,
+    bodyDir: u.bodyDir || 0, turretDir: u.turretDir || 0, direction: u.direction || 0,
+    isInRiver: !!u.isInRiver, hasMoved: !!u.hasMoved, wasKnockbacked: !!u.wasKnockbacked,
+    respawnCountdown: u.respawnCountdown || 0, isNanoReviving: !!u.isNanoReviving,
+    freshBuild: !!u.freshBuild, isPlayerPicked: !!u.isPlayerPicked,
+    builderType: u.builder ? (u.builder.cfg && u.builder.cfg.id) : null
+  });
+  return {
+    mapId: finalMap.id,
+    grid: gridData.map(row => row.map(cell => ({
+      terrain: cell.terrain, hp: cell.hp, maxHp: cell.maxHp,
+      isRedBase: !!cell.isRedBase, isBlueBase: !!cell.isBlueBase,
+      isHQ: cell.isHQ || null, burnTurns: cell.burnTurns || 0
+    }))),
+    redHQ: redHQ ? { pos: redHQ.pos, hp: redHQ.hp, maxHp: redHQ.maxHp, burnTurns: redHQ.burnTurns || 0 } : null,
+    blueHQ: blueHQ ? { pos: blueHQ.pos, hp: blueHQ.hp, maxHp: blueHQ.maxHp, burnTurns: blueHQ.burnTurns || 0 } : null,
+    redUnits: redUnits.map(serUnit),
+    blueUnits: blueUnits.map(serUnit),
+    currentTeam,
+    totalTurns,
+    redDamageDealt,
+    blueDamageDealt,
+    radiationSources: radiationSources.map(s => ({ row: s.row, col: s.col, x: s.x, team: s.team, heldOnce: !!s.heldOnce })),
+    basePosRef: {
+      red: basePosRef.red ? { row: basePosRef.red.row, col: basePosRef.red.col } : null,
+      blue: basePosRef.blue ? { row: basePosRef.blue.row, col: basePosRef.blue.col } : null
+    }
+  };
 }
 
-function renderOnlinePanel() {
-  const panel = document.getElementById('online-panel');
-  if (!panel) return;
-  if (!backendAvailable) {
-    panel.innerHTML =
-      '<div style="background:linear-gradient(160deg,#1b2748,#121a30);border-radius:12px;padding:14px 16px;border:1px solid #2c3a60;">' +
-      '<h4 style="color:var(--gold);margin-bottom:10px;font-size:.9rem;text-align:center;">🌐 联机对战</h4>' +
-      '<p style="font-size:.82rem;color:var(--dim);line-height:1.8;text-align:center;">' +
-      '联机对战需要部署后端服务。<br><br>' +
-      '当前未检测到后端，联机功能暂不可用。<br><br>' +
-      '请参考部署教程配置 Cloudflare Workers + D1 后重启游戏。' +
-      '</p></div>' +
-      '<button class="btn-back" onclick="switchScreen(\'screen-main\')">🔙 返回</button>';
-    return;
+function onlineDeserializeUnit(d, team) {
+  const cfg = TANK_CONFIGS.find(t => t.id === d.cfgId) || TANK_CONFIGS[0];
+  const u = new Unit(cfg, team, d.pos ? { row: d.pos.row, col: d.pos.col } : null);
+  Object.assign(u, {
+    hp: d.hp, maxHp: d.maxHp, alive: d.alive,
+    shield: d.shield, shieldLayers: d.shieldLayers || 0,
+    cooldownRemaining: d.cooldownRemaining || 0, cooldownLocked: !!d.cooldownLocked,
+    moveStepsLeft: d.moveStepsLeft || 0, attackCountLeft: d.attackCountLeft || 0,
+    buildCountLeft: d.buildCountLeft || 0,
+    waitingJump: !!d.waitingJump, jumpWaitTurns: d.jumpWaitTurns || 0, jumpDest: d.jumpDest || null,
+    isUnderground: !!d.isUnderground, waitingDigIn: !!d.waitingDigIn, pendingDigOut: !!d.pendingDigOut,
+    burnTurns: d.burnTurns || 0,
+    nanoGroupId: d.nanoGroupId || null, nanoLevel: d.nanoLevel || 0,
+    bodyDir: d.bodyDir || (team === 'red' ? 90 : 270),
+    turretDir: d.turretDir || d.bodyDir || (team === 'red' ? 90 : 270),
+    direction: d.direction || 0,
+    isInRiver: !!d.isInRiver, hasMoved: !!d.hasMoved, wasKnockbacked: !!d.wasKnockbacked,
+    respawnCountdown: d.respawnCountdown || 0, isNanoReviving: !!d.isNanoReviving,
+    freshBuild: !!d.freshBuild, isPlayerPicked: !!d.isPlayerPicked
+  });
+  if (d.pos) {
+    initUnitAnim(u);
+    u.anim.wx = d.pos.col;
+    u.anim.wz = d.pos.row;
+    u.anim.bodyDir = u.bodyDir;
+    u.anim.turretDir = u.turretDir;
   }
-  panel.innerHTML =
-    '<div class="battle-modes">' +
-    '<button class="battle-mode-btn" onclick="onlineCreateRoom()">🎮 创建房间<span class="sub">生成房间号，等待对手</span></button>' +
-    '<button class="battle-mode-btn" onclick="onlineJoinRoom()">🔗 加入房间<span class="sub">输入房间号加入</span></button>' +
-    '</div>' +
-    '<button class="btn-back" onclick="switchScreen(\'screen-main\')">🔙 返回</button>';
+  return u;
 }
 
-async function onlineCreateRoom() {
-  playClick();
-  if (!backendAvailable) { showOverlay('后端不可用', 1200); return; }
-  try {
-    const res = await fetch('/api/online/create', {
-      method: 'POST',
-      headers: authHeaders(),
-      body: JSON.stringify({ mode: 'pve', tank: redSelectedTank || 'basic' })
-    });
-    const data = await res.json();
-    if (!data.success) { showOverlay(data.error || '创建失败', 1500); return; }
-    OnlineState.roomId = data.roomId;
-    OnlineState.role = 'host';
-    OnlineState.playerTeam = data.team;
-    OnlineState.lastTurn = 0;
-    onlineShowWaitingRoom();
-    onlineStartPolling();
-  } catch (e) {
-    showOverlay('创建失败，请重试', 1500);
+function applyOnlineState(state) {
+  finalMap = MAP_CONFIGS.find(m => m.id === state.mapId) || MAP_CONFIGS[0];
+  gameMap = finalMap;
+  ROWS = getRowLetters(state.grid.length);
+  COLS = state.grid[0].length;
+
+  gridData = state.grid.map(row => row.map(cell => ({
+    terrain: cell.terrain, occupant: null,
+    isRedBase: !!cell.isRedBase, isBlueBase: !!cell.isBlueBase,
+    isHQ: cell.isHQ || null,
+    hp: cell.hp, maxHp: cell.maxHp,
+    buildFrom: null, burnTurns: cell.burnTurns || 0
+  })));
+
+  redUnits = state.redUnits.map(d => onlineDeserializeUnit(d, 'red'));
+  blueUnits = state.blueUnits.map(d => onlineDeserializeUnit(d, 'blue'));
+
+  for (const u of redUnits.concat(blueUnits)) {
+    if (u.alive && u.pos && !u.isUnderground) {
+      gridData[u.pos.row][u.pos.col].occupant = u.team === 'red' ? 'red_tank' : 'blue_tank';
+    }
   }
-}
 
-function onlineJoinRoom() {
-  playClick();
-  if (!backendAvailable) { showOverlay('后端不可用', 1200); return; }
-  const input = prompt('请输入房间号：');
-  if (!input) return;
-  onlineDoJoinRoom(input.trim().toUpperCase());
-}
-
-async function onlineDoJoinRoom(roomId) {
-  try {
-    const res = await fetch('/api/online/join', {
-      method: 'POST',
-      headers: authHeaders(),
-      body: JSON.stringify({ roomId: roomId })
-    });
-    const data = await res.json();
-    if (!data.success) { showOverlay(data.error || '加入失败', 1500); return; }
-    OnlineState.roomId = data.roomId;
-    OnlineState.role = 'guest';
-    OnlineState.playerTeam = data.team;
-    OnlineState.lastTurn = 0;
-    showOverlay('✅ 已加入房间 ' + roomId, 1200);
-    onlineStartGame();
-  } catch (e) {
-    showOverlay('加入失败，请重试', 1500);
+  if (state.redHQ) {
+    basePosRef.red = state.redHQ.pos;
+    redHQ = { pos: state.redHQ.pos, hp: state.redHQ.hp, maxHp: state.redHQ.maxHp, burnTurns: state.redHQ.burnTurns || 0, baseTank: null };
   }
+  if (state.blueHQ) {
+    basePosRef.blue = state.blueHQ.pos;
+    blueHQ = { pos: state.blueHQ.pos, hp: state.blueHQ.hp, maxHp: state.blueHQ.maxHp, burnTurns: state.blueHQ.burnTurns || 0, baseTank: null };
+  }
+
+  currentTeam = state.currentTeam;
+  totalTurns = state.totalTurns || 0;
+  redDamageDealt = state.redDamageDealt || 0;
+  blueDamageDealt = state.blueDamageDealt || 0;
+  radiationSources = (state.radiationSources || []).map(s => ({ row: s.row, col: s.col, x: s.x, team: s.team, heldOnce: !!s.heldOnce }));
+
+  currentUnit = (currentTeam === 'red' ? redUnits : blueUnits).find(u => u.alive && !u.cfg.isNuke) || null;
+  selectedAction = null;
+  highlightedCells = [];
+  highlightedBuildCells = [];
+  rangeDisplayUnit = null;
+
+  ISO.ready = false;
+  isoLayout();
+  updateGameUI();
+  updateActionButtons();
+  drawGameCanvas(performance.now());
 }
 
-function onlineShowWaitingRoom() {
-  const panel = document.getElementById('online-panel');
-  if (!panel) return;
-  panel.innerHTML =
-    '<div style="background:linear-gradient(160deg,#1b2748,#121a30);border-radius:12px;padding:14px 16px;border:1px solid #2c3a60;">' +
-    '<h4 style="color:var(--gold);margin-bottom:10px;font-size:.9rem;text-align:center;">🎮 房间 ' + OnlineState.roomId + '</h4>' +
-    '<p style="font-size:.9rem;color:var(--gold);text-align:center;font-weight:700;">' +
-    '你是 ' + (OnlineState.playerTeam === 'red' ? '🔴 红方' : '🔵 蓝方') +
-    '</p>' +
-    '<p style="font-size:.8rem;color:var(--dim);text-align:center;margin-top:10px;">' +
-    '等待对手加入...<br><br>' +
-    '把房间号分享给好友：<br>' +
-    '<span style="color:#fff;font-size:1.2rem;font-weight:900;letter-spacing:3px;">' + OnlineState.roomId + '</span>' +
-    '</p></div>' +
-    '<button class="btn btn-outline" onclick="onlineLeaveRoom()">离开房间</button>';
-}
+/* ---- 房主初始化（从房间信息生成战斗） ---- */
+async function onlineHostInit() {
+  const room = OnlineState.roomCache;
+  if (!room) return;
 
-function onlineStartGame() {
   gameMode = 'online';
   onlineRunning = true;
-  currentState = 'GAME_PLAY';
-  finalMap = MAP_CONFIGS.find(function(m) { return m.id === redSelectedMap; }) || MAP_CONFIGS[0];
+  OnlineState.running = true;
+
+  redSelectedTank = room.host_tank || 'basic';
+  blueSelectedTank = room.guest_tank || 'basic';
+  redSelectedMap = room.map_id || 'position_zero';
+  blueSelectedMap = redSelectedMap;
+
+  finalMap = MAP_CONFIGS.find(m => m.id === redSelectedMap) || MAP_CONFIGS[0];
   gameMap = finalMap;
   gridData = initGridData(finalMap);
   ISO.ready = false;
-  switchScreen('screen-game');
-  setTimeout(function() { isoLayout(); }, 60);
-  redUnits = [];
-  blueUnits = [];
-  redHQ = null;
-  blueHQ = null;
-  basePosRef = { red: null, blue: null };
-  baseTankRef = { red: null, blue: null };
-  let rp = null, bp = null;
+
+  // 基地：地图上第一个 base_red / base_blue
+  let rBase = null, bBase = null;
   for (let r = 0; r < ROWS.length; r++) {
     for (let c = 0; c < COLS; c++) {
-      if (gridData[r][c].isRedBase && !rp) rp = { row: r, col: c };
-      if (gridData[r][c].isBlueBase && !bp) bp = { row: r, col: c };
+      if (gridData[r][c].isRedBase && !rBase) rBase = indexToPos(r, c);
+      if (gridData[r][c].isBlueBase && !bBase) bBase = indexToPos(r, c);
     }
   }
-  if (rp) {
-    gridData[rp.row][rp.col].isHQ = 'red';
-    basePosRef.red = rp;
-    redHQ = { pos: rp, hp: 6, maxHp: 6, baseTank: null, burnTurns: 0 };
-    const cfg = TANK_CONFIGS.find(function(t) { return t.id === (redSelectedTank || 'basic'); });
-    const u = new Unit(cfg, 'red', { row: rp.row - 1, col: rp.col });
-    redUnits.push(u);
-    initUnitAnim(u);
-  }
-  if (bp) {
-    gridData[bp.row][bp.col].isHQ = 'blue';
-    basePosRef.blue = bp;
-    blueHQ = { pos: bp, hp: 6, maxHp: 6, baseTank: null, burnTurns: 0 };
-  }
-  currentTeam = OnlineState.playerTeam;
-  currentUnit = (currentTeam === 'red' ? redUnits : blueUnits)[0] || null;
+  redSelectedBase = rBase;
+  blueSelectedBase = bBase;
+
+  initUnits();
+
   totalTurns = 0;
+  redDamageDealt = 0;
+  blueDamageDealt = 0;
   effects = [];
   floatingTexts = [];
+  projectiles = [];
+  radiationSources = [];
+  trackMarkPool = [];
+  wakeTrailPool = [];
+  healBeams = [];
+  flameJets = [];
+  deathFireExplosions = [];
+  buildAnims = [];
+  meleeAnims = [];
   inputLocked = false;
   isEndingTurn = false;
-  updateGameUI();
-  drawGameCanvas(performance.now());
-  startRenderLoop();
-  AudioManager.startBattleMusic();
-  showOverlay('🌐 联机对战开始', 1500);
+  aiRunning = false;
+  trustEnabled = { red: false, blue: false };
+  nukeScreenShakeUntil = 0;
+  baseScreenShakeUntil = 0;
+  nukeWhiteFlashUntil = 0;
+
+  currentTeam = 'red';
+  currentUnit = redUnits.find(u => u.alive && !u.cfg.isNuke) || redUnits[0] || null;
+
+  switchScreen('screen-game');
+  setTimeout(() => {
+    isoLayout();
+    updateGameUI();
+    updateActionButtons();
+    drawGameCanvas(performance.now());
+    startRenderLoop();
+    AudioManager.startBattleMusic();
+    showOverlay('🔴 红方先手', 1400);
+  }, 100);
+
+  // 首次提交（move_count: 0 → 1）
+  await onlineSubmitState(false);
 }
 
-function onlineStartPolling() {
-  if (OnlineState.polling) return;
-  OnlineState.polling = true;
-  OnlineState.pollTimer = setInterval(onlinePoll, 2000);
+/* ---- guest 首次加载：轮询等待房主初始化完成 ---- */
+async function onlineGuestWaitInit() {
+  switchScreen('screen-online');
+  const panel = document.getElementById('online-panel');
+  panel.innerHTML = '<div style="text-align:center;padding:40px;color:var(--dim);">等待房主初始化战斗...</div>';
+  startOnlinePolling(true);
 }
-function onlineStopPolling() {
-  OnlineState.polling = false;
+
+/* ---- 提交状态 ---- */
+async function onlineSubmitState(isInit, winnerOverride) {
+  if (!OnlineState.roomId) return;
+  const state = onlineSerialize();
+  let winner = winnerOverride || null;
+  if (!winner && currentState === 'GAME_OVER') {
+    if (redHQ && redHQ.hp <= 0) winner = 'blue';
+    else if (blueHQ && blueHQ.hp <= 0) winner = 'red';
+  }
+  try {
+    const res = await fetch('/api/online/submit-state', {
+      method: 'POST',
+      headers: authHeaders(),
+      body: JSON.stringify({ roomId: OnlineState.roomId, state, winner })
+    });
+    const data = await res.json();
+    if (!data.success) devLog('[联机提交失败] ' + (data.error || '?'), 'err');
+  } catch (e) {
+    devLog('[联机提交失败] ' + (e && e.message ? e.message : e), 'err');
+  }
+}
+
+/* ---- 锁定等待 ---- */
+function lockForOnlineWait() {
+  inputLocked = true;
+  selectedAction = null;
+  highlightedCells = [];
+  highlightedBuildCells = [];
+  updateGameUI();
+  updateActionButtons();
+  const hint = document.getElementById('action-hint');
+  if (hint) hint.textContent = '⏳ 等待对手行动...';
+  drawGameCanvas(performance.now());
+}
+
+/* ---- 轮询 ---- */
+function startOnlinePolling(initPhase) {
+  if (OnlineState.pollTimer) return;
+  OnlineState.pollTimer = setInterval(() => onlinePollTick(!!initPhase), 1500);
+}
+function stopOnlinePolling() {
   if (OnlineState.pollTimer) {
     clearInterval(OnlineState.pollTimer);
     OnlineState.pollTimer = null;
   }
 }
-async function onlinePoll() {
-  if (!OnlineState.roomId || !backendAvailable) return;
+
+async function onlinePollTick(initPhase) {
+  if (!OnlineState.roomId) { stopOnlinePolling(); return; }
   try {
-    const res = await fetch('/api/online/room/' + OnlineState.roomId, { headers: authHeaders() });
+    const res = await fetch('/api/online/room?id=' + OnlineState.roomId, { headers: authHeaders() });
     const data = await res.json();
-    if (!data.success) {
-      onlineStopPolling();
+    if (!data.room) { stopOnlinePolling(); showOverlay('房间已失效', 2000); return; }
+    const room = data.room;
+    OnlineState.roomCache = room;
+
+    if (room.status === 'ended') {
+      stopOnlinePolling();
+      const winner = room.winner_team || null;
+      showOnlineEnd(winner);
       return;
     }
-    if (data.status === 'playing' && currentState !== 'GAME_PLAY') {
-      onlineStartGame();
+
+    // 初始化阶段（房主还没上传 state）
+    if (initPhase) {
+      if (room.state_json) {
+        const state = JSON.parse(room.state_json);
+        applyOnlineState(state);
+        OnlineState.lastMoveCount = room.move_count;
+        OnlineState.running = true;
+        onlineRunning = true;
+        gameMode = 'online';
+        enterOnlineBattle();
+        stopOnlinePolling();
+        if (state.currentTeam !== OnlineState.myTeam) {
+          lockForOnlineWait();
+          startOnlinePolling(false);
+        }
+      }
+      return;
     }
-    if (data.opponentDisconnected && !OnlineState.disconnected) {
-      OnlineState.disconnected = true;
-      showOverlay('⚠️ 对手断线，AI 接管', 2000);
+
+    // 正常轮询：拉完整 state 只在 move_count 变化时
+    if (room.move_count > OnlineState.lastMoveCount && room.state_json) {
+      const state = JSON.parse(room.state_json);
+      applyOnlineState(state);
+      OnlineState.lastMoveCount = room.move_count;
+
+      if (state.currentTeam === OnlineState.myTeam) {
+        stopOnlinePolling();
+        inputLocked = false;
+        updateGameUI();
+        updateActionButtons();
+        showOverlay('⚔️ 轮到你了', 1200);
+      }
     }
-    if (data.lastTurn > OnlineState.lastTurn) {
-      OnlineState.lastTurn = data.lastTurn;
-    }
-  } catch (e) {}
+  } catch (e) {
+    devLog('[联机轮询] ' + (e && e.message ? e.message : e), 'warn');
+  }
 }
-function onlineLeaveRoom() {
-  playClick();
-  showConfirm('确定离开房间？', function() {
+
+/* ---- 进入战斗（guest 已反序列化完成 / 房主初始化完成） ---- */
+function enterOnlineBattle() {
+  switchScreen('screen-game');
+  setTimeout(() => {
+    ISO.ready = false;
+    isoLayout();
+    updateGameUI();
+    updateActionButtons();
+    drawGameCanvas(performance.now());
+    startRenderLoop();
+    AudioManager.startBattleMusic();
+  }, 80);
+}
+
+/* ---- 显示联机结算 ---- */
+function showOnlineEnd(winner) {
+  if (OnlineState.ended) return;
+  OnlineState.ended = true;
+  stopRenderLoop();
+  const myWin = (winner === OnlineState.myTeam);
+  document.getElementById('settlement-title').textContent = myWin ? '🏆 你赢了！' : '💀 你输了';
+  document.getElementById('settlement-stats').innerHTML =
+    '<div><span>结果</span><span>' + (winner ? (myWin ? '胜利' : '失败') : '房间已关闭') + '</span></div>';
+  const btnRow = document.getElementById('settlement-buttons');
+  btnRow.innerHTML = '';
+  const backBtn = document.createElement('button');
+  backBtn.className = 'btn btn-gold';
+  backBtn.textContent = '🏠 返回主菜单';
+  backBtn.onclick = () => {
+    cleanupBattle();
+    stopRenderLoop();
     OnlineState.roomId = null;
-    OnlineState.role = null;
-    OnlineState.playerTeam = null;
-    onlineStopPolling();
-    OnlineState.disconnected = false;
-    renderOnlinePanel();
-  });
+    OnlineState.running = false;
+    OnlineState.ended = false;
+    document.getElementById('modal-settlement').classList.remove('show');
+    window.location.href = 'index.html';
+  };
+  btnRow.appendChild(backBtn);
+  document.getElementById('modal-settlement').classList.add('show');
+}
+
+/* ---- 主入口：从 URL 参数进入联机 ---- */
+async function startOnlineGame(roomId) {
+  OnlineState.roomId = roomId;
+  OnlineState.ended = false;
+  OnlineState.lastMoveCount = 0;
+
+  try {
+    const res = await fetch('/api/online/room?id=' + roomId + '&state=1', { headers: authHeaders() });
+    const data = await res.json();
+    if (!data.room) { showOverlay('房间不存在', 2000); return; }
+    const room = data.room;
+    OnlineState.roomCache = room;
+
+    if (room.host_id === (currentUser && currentUser.id)) OnlineState.myTeam = 'red';
+    else if (room.guest_id === (currentUser && currentUser.id)) OnlineState.myTeam = 'blue';
+    else { showOverlay('你不是房间成员', 2000); return; }
+
+    if (room.status === 'ended') { showOnlineEnd(room.winner_team); return; }
+
+    // 已有 state：直接反序列化
+    if (room.state_json) {
+      const state = JSON.parse(room.state_json);
+      applyOnlineState(state);
+      OnlineState.lastMoveCount = room.move_count;
+      OnlineState.running = true;
+      onlineRunning = true;
+      gameMode = 'online';
+      enterOnlineBattle();
+      if (state.currentTeam !== OnlineState.myTeam) {
+        lockForOnlineWait();
+        startOnlinePolling(false);
+      }
+      return;
+    }
+
+    // 无 state：
+    if (OnlineState.myTeam === 'red') {
+      // 房主负责初始化
+      await onlineHostInit();
+    } else {
+      // guest 等待
+      await onlineGuestWaitInit();
+    }
+  } catch (e) {
+    showOverlay('连接房间失败：' + (e && e.message ? e.message : e), 2500);
+  }
 }
 
 /* ============================================================
